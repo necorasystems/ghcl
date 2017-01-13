@@ -6,7 +6,7 @@
  * @copyright 2016 Necora Systems Oy
  * @license MIT
  */
-require_once('vendor/autoload.php');
+require_once('../../vendor/autoload.php');
 
 use GetOptionKit\OptionCollection;
 use GetOptionKit\OptionParser;
@@ -66,8 +66,17 @@ if (strlen($options->token) > 0) {
 
 $http = new GuzzleHttp\Client(['base_uri' => "https://api.github.com/", 'verify' => false, 'headers' => $headers]);
 
+$number = 0;
+
 try {
 	$response = $http->request('GET', "repos/" . $options->user . "/" . $options->repository . '/milestones?state=all');
+	$data = json_decode($response->getBody());
+	foreach ($data as $d) {
+		if ($d->title == $options->milestone) {
+			$number = $d->number;
+			break;
+		}
+	}
 } catch (\GuzzleHttp\Exception\RequestException $e) {
 	if ($e->hasResponse()) {
 		if ($e->getResponse()->getStatusCode() == 404) {
@@ -79,20 +88,64 @@ try {
 	}
 }
 
-$data = json_decode($response->getBody());
-$number = 0;
-foreach ($data as $d) {
-	if ($d->title == $options->milestone) {
-		$number = $d->number;
-		break;
-	}
-}
 if ($number == 0) {
 	echo "Could not find milestone \"" . $options->milestone . "\"\n\n"; exit(-1);
 }
 
+$bugs = array();
+$enhancements = array();
 try {
 	$response = $http->request('GET', "repos/" . $options->user . "/" . $options->repository . "/issues?milestone=$number&state=all");
+	$issues = json_decode($response->getBody());
+
+
+	foreach ($issues as $issue) {
+		if (isset($issue->pull_request)) continue;
+		if (isset($issue->labels) && is_array($issue->labels)) {
+			foreach ($issue->labels as $label) {
+				if ($label->name == 'bug') {
+					$bugs[$issue->number] = "- " . $issue->title . " [#" . $issue->number . "]";
+				} elseif ($label->name == 'enhancement') {
+					$enhancements[$issue->number] = "- " . $issue->title . " [#" . $issue->number . "]";
+				} elseif ($label->name == 'skip-changelog') {
+					if (isset($bugs[$issue->number])) unset($bugs[$issue->number]);
+					if (isset($enhancements[$issue->number])) unset($enhancements[$issue->number]);
+					continue 2;
+				}
+			}
+		}
+	}
+
+	if (is_array($response->getHeader('Link'))) {
+		$l = $response->getHeader('Link');
+		$links = explode(',', $l[0]);
+		foreach($links as $link) {
+			$parts = explode(';', $link);
+			if (strpos($parts[0], '<') !== false && trim($parts[1]) == 'rel="next"') {
+				$url = str_replace(array('<', '>'), '', $parts[0]);
+				$response = $http->request('GET', $url);
+				$issues = json_decode($response->getBody());
+
+				foreach ($issues as $issue) {
+					if (isset($issue->pull_request)) continue;
+					if (isset($issue->labels) && is_array($issue->labels)) {
+						foreach ($issue->labels as $label) {
+							if ($label->name == 'bug') {
+								$bugs[$issue->number] = "- " . $issue->title . " [#" . $issue->number . "]";
+							} elseif ($label->name == 'enhancement') {
+								$enhancements[$issue->number] = "- " . $issue->title . " [#" . $issue->number . "]";
+							} elseif ($label->name == 'skip-changelog') {
+								if (isset($bugs[$issue->number])) unset($bugs[$issue->number]);
+								if (isset($enhancements[$issue->number])) unset($enhancements[$issue->number]);
+								continue 2;
+							}
+						}
+					}
+				}
+			}
+		}
+
+	}
 } catch (\GuzzleHttp\Exception\RequestException $e) {
 	if ($e->hasResponse()) {
 		if ($e->getResponse()->getStatusCode() == 404) {
@@ -104,25 +157,7 @@ try {
 	}
 }
 
-$issues = json_decode($response->getBody());
-$bugs = array();
-$enhancements = array();
 
-foreach ($issues as $issue) {
-	if (isset($issue->labels) && is_array($issue->labels)) {
-		foreach ($issue->labels as $label) {
-			if ($label->name == 'bug') {
-				$bugs[$issue->number] = "- " . $issue->title . " [#" . $issue->number . "]";
-			} elseif ($label->name == 'enhancement') {
-				$enhancements[$issue->number] = "- " . $issue->title . " [#" . $issue->number . "]";
-			} elseif ($label->name == 'skip-changelog') {
-				if (isset($bugs[$issue->number])) unset($bugs[$issue->number]);
-				if (isset($enhancements[$issue->number])) unset($enhancements[$issue->number]);
-				continue 2;
-			}
-		}
-	}
-}
 
 echo "##Version 3.6.0 (" . date('Y-m-d') . ")\n\n";
 if (!empty($bugs)) {
