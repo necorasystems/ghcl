@@ -6,7 +6,7 @@
  * @copyright 2016 Necora Systems Oy
  * @license MIT
  */
-require_once('../../vendor/autoload.php');
+require_once(__DIR__ . '/../../vendor/autoload.php');
 
 use GetOptionKit\OptionCollection;
 use GetOptionKit\OptionParser;
@@ -17,7 +17,7 @@ $specs->add('m|milestone:', 'The milestone' )
 	->isa('String');
 $specs->add('f|file:', 'The file to write the changelog to. Defaults to STDOUT')
 	->isa('String');
-$specs->add('p|prepend', 'Prepend the changelog to the file given with --file');
+$specs->add('p|prepend', 'Prepend the changelog to the file given with --file [NOT IMPLEMENTED YET]');
 $specs->add('t|token:', 'GitHub access token')->isa('string');
 $specs->add('u|user:', 'The user or GitHub organisation')->isa('string');
 $specs->add('r|repository:', 'The repository name')->isa('string');
@@ -28,6 +28,8 @@ $specs->add('h|help', 'Show this help');
 echo "Fastest and smallest GitHub changelog generator ever version 0.1\n\n";
 
 $parser = new OptionParser($specs);
+
+$output = STDOUT;
 
 try {
 	$options = $parser->parse($argv);
@@ -49,6 +51,10 @@ try {
 	}
 	if (strlen($options->milestone) == 0) {
 		echo "You must specify the milestone.\n"; exit(-1);
+	}
+
+	if (strlen($options->file) > 0) {
+		$output = $options->file;
 	}
 
 } catch (Exception $e) {
@@ -118,26 +124,28 @@ try {
 
 	if (is_array($response->getHeader('Link'))) {
 		$l = $response->getHeader('Link');
-		$links = explode(',', $l[0]);
-		foreach($links as $link) {
-			$parts = explode(';', $link);
-			if (strpos($parts[0], '<') !== false && trim($parts[1]) == 'rel="next"') {
-				$url = str_replace(array('<', '>'), '', $parts[0]);
-				$response = $http->request('GET', $url);
-				$issues = json_decode($response->getBody());
+		if (is_array($l) && !empty($l)) {
+			$links = explode(',', $l[0]);
+			foreach ($links as $link) {
+				$parts = explode(';', $link);
+				if (strpos($parts[0], '<') !== false && trim($parts[1]) == 'rel="next"') {
+					$url = str_replace(array('<', '>'), '', $parts[0]);
+					$response = $http->request('GET', $url);
+					$issues = json_decode($response->getBody());
 
-				foreach ($issues as $issue) {
-					if (isset($issue->pull_request)) continue;
-					if (isset($issue->labels) && is_array($issue->labels)) {
-						foreach ($issue->labels as $label) {
-							if ($label->name == 'bug') {
-								$bugs[$issue->number] = "- " . $issue->title . " [#" . $issue->number . "]";
-							} elseif ($label->name == 'enhancement') {
-								$enhancements[$issue->number] = "- " . $issue->title . " [#" . $issue->number . "]";
-							} elseif ($label->name == 'skip-changelog') {
-								if (isset($bugs[$issue->number])) unset($bugs[$issue->number]);
-								if (isset($enhancements[$issue->number])) unset($enhancements[$issue->number]);
-								continue 2;
+					foreach ($issues as $issue) {
+						if (isset($issue->pull_request)) continue;
+						if (isset($issue->labels) && is_array($issue->labels)) {
+							foreach ($issue->labels as $label) {
+								if ($label->name == 'bug') {
+									$bugs[$issue->number] = "- " . $issue->title . " [#" . $issue->number . "]";
+								} elseif ($label->name == 'enhancement') {
+									$enhancements[$issue->number] = "- " . $issue->title . " [#" . $issue->number . "]";
+								} elseif ($label->name == 'skip-changelog') {
+									if (isset($bugs[$issue->number])) unset($bugs[$issue->number]);
+									if (isset($enhancements[$issue->number])) unset($enhancements[$issue->number]);
+									continue 2;
+								}
 							}
 						}
 					}
@@ -149,7 +157,7 @@ try {
 } catch (\GuzzleHttp\Exception\RequestException $e) {
 	if ($e->hasResponse()) {
 		if ($e->getResponse()->getStatusCode() == 404) {
-			echo "1The request resulted in a 404 Not Found response. Check the username, repository and possible access token."; exit(-1);
+			echo "The request resulted in a 404 Not Found response. Check the username, repository and possible access token."; exit(-1);
 		}
 	} else {
 		echo "An unexpected error occurred:\n\n";
@@ -157,20 +165,25 @@ try {
 	}
 }
 
-
-
-echo "##Version 3.6.0 (" . date('Y-m-d') . ")\n\n";
-if (!empty($bugs)) {
-	echo "**Fixed bugs**\n\n";
-	foreach ($bugs as $bug) {
-		echo $bug . "\n";
+if (is_string($output)) {
+	$output = fopen($output, 'w');
+	if (!is_resource($output)) {
+		die('Could not open ' . $output . ' for writing');
 	}
-	echo "\n";
+}
+
+fputs($output, "##Version " . $options->milestone . " (" . date('Y-m-d') . ")\n\n");
+if (!empty($bugs)) {
+	fputs($output, "**Fixed bugs**\n\n");
+	foreach ($bugs as $bug) {
+		fputs($output, $bug . "\n");
+	}
+	fputs($output, "\n");
 }
 if (!empty($enhancements)) {
-	echo "**Implemented enhancements**\n\n";
+	fputs($output, "**Implemented enhancements**\n\n");
 	foreach ($enhancements as $enhancement) {
-		echo $enhancement . "\n";
+		fputs($output, $enhancement . "\n");
 	}
-	echo "\n";
+	fputs($output, "\n");
 }
