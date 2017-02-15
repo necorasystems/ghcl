@@ -3,7 +3,7 @@
  * Fastest and smallest Github changelog generator ever.
  *
  * @author Markus Lervik <markus.lervik@necora.fi>
- * @copyright 2016 Necora Systems Oy
+ * @copyright 2017 Necora Systems Oy
  * @license MIT
  */
 require_once(__DIR__ . '/../../vendor/autoload.php');
@@ -21,15 +21,16 @@ $specs->add('p|prepend', 'Prepend the changelog to the file given with --file [N
 $specs->add('t|token:', 'GitHub access token')->isa('string');
 $specs->add('u|user:', 'The user or GitHub organisation')->isa('string');
 $specs->add('r|repository:', 'The repository name')->isa('string');
-$specs->add('title:', 'The title of the changelog file. Defaults to "Change Log"')->isa('string');
+$specs->add('title:', 'The title of the changelog file. Defaults to "Change Log" [NOT IMPLEMENTED YET]')->isa('string');
 $specs->add('h|help', 'Show this help');
-
+$specs->add('v|verbose', 'Be verbose');
 
 echo "Fastest and smallest GitHub changelog generator ever version 0.1\n\n";
 
 $parser = new OptionParser($specs);
 
 $output = STDOUT;
+$debug  = false;
 
 try {
 	$options = $parser->parse($argv);
@@ -52,9 +53,11 @@ try {
 	if (strlen($options->milestone) == 0) {
 		echo "You must specify the milestone.\n"; exit(-1);
 	}
-
 	if (strlen($options->file) > 0) {
 		$output = $options->file;
+	}
+	if ($options->verbose === true) {
+		$debug = true;
 	}
 
 } catch (Exception $e) {
@@ -75,10 +78,12 @@ $http = new GuzzleHttp\Client(['base_uri' => "https://api.github.com/", 'verify'
 $number = 0;
 
 try {
+	if ($debug) echo "Attempting to find milestone " . $options->milestone . "...\n";
 	$response = $http->request('GET', "repos/" . $options->user . "/" . $options->repository . '/milestones?state=all');
 	$data = json_decode($response->getBody());
 	foreach ($data as $d) {
 		if ($d->title == $options->milestone) {
+			if ($debug) echo "Found milestone " . $d->title . ' with ID ' . $d->number . "\n";
 			$number = $d->number;
 			break;
 		}
@@ -86,7 +91,7 @@ try {
 } catch (\GuzzleHttp\Exception\RequestException $e) {
 	if ($e->hasResponse()) {
 		if ($e->getResponse()->getStatusCode() == 404) {
-			echo "2The request resulted in a 404 Not Found response. Check the username, repository and possible access token."; exit(-1);
+			echo "The request resulted in a 404 Not Found response. Check the username, repository and possible access token."; exit(-1);
 		}
 	} else {
 		echo "An unexpected error occurred:\n\n";
@@ -101,18 +106,21 @@ if ($number == 0) {
 $bugs = array();
 $enhancements = array();
 try {
+	if ($debug) echo "Fetching issues...\n";
 	$response = $http->request('GET', "repos/" . $options->user . "/" . $options->repository . "/issues?milestone=$number&state=all");
 	$issues = json_decode($response->getBody());
-
-
+	$bcount = 0;
+	$ecount = 0;
 	foreach ($issues as $issue) {
 		if (isset($issue->pull_request)) continue;
 		if (isset($issue->labels) && is_array($issue->labels)) {
 			foreach ($issue->labels as $label) {
 				if ($label->name == 'bug') {
-					$bugs[$issue->number] = "- " . $issue->title . " [#" . $issue->number . "]";
+					$bugs[$issue->number] = "  - " . $issue->title . " [#" . $issue->number . "]";
+					$bcount++;
 				} elseif ($label->name == 'enhancement') {
-					$enhancements[$issue->number] = "- " . $issue->title . " [#" . $issue->number . "]";
+					$enhancements[$issue->number] = "  - " . $issue->title . " [#" . $issue->number . "]";
+					$ecount++;
 				} elseif ($label->name == 'skip-changelog') {
 					if (isset($bugs[$issue->number])) unset($bugs[$issue->number]);
 					if (isset($enhancements[$issue->number])) unset($enhancements[$issue->number]);
@@ -122,25 +130,31 @@ try {
 		}
 	}
 
+	if ($debug) echo "Found " . ($bcount + $ecount) . " issues\n";
+
 	if (is_array($response->getHeader('Link'))) {
 		$l = $response->getHeader('Link');
 		if (is_array($l) && !empty($l)) {
 			$links = explode(',', $l[0]);
 			foreach ($links as $link) {
+				if ($debug) echo "Fetching next page of issues...\n";
+				$bcount = 0;
+				$ecount = 0;
 				$parts = explode(';', $link);
 				if (strpos($parts[0], '<') !== false && trim($parts[1]) == 'rel="next"') {
 					$url = str_replace(array('<', '>'), '', $parts[0]);
 					$response = $http->request('GET', $url);
 					$issues = json_decode($response->getBody());
-
 					foreach ($issues as $issue) {
 						if (isset($issue->pull_request)) continue;
 						if (isset($issue->labels) && is_array($issue->labels)) {
 							foreach ($issue->labels as $label) {
 								if ($label->name == 'bug') {
-									$bugs[$issue->number] = "- " . $issue->title . " [#" . $issue->number . "]";
+									$bugs[$issue->number] = "  - " . $issue->title . " [#" . $issue->number . "]";
+									$bcount++;
 								} elseif ($label->name == 'enhancement') {
-									$enhancements[$issue->number] = "- " . $issue->title . " [#" . $issue->number . "]";
+									$enhancements[$issue->number] = "  - " . $issue->title . " [#" . $issue->number . "]";
+									$ecount++;
 								} elseif ($label->name == 'skip-changelog') {
 									if (isset($bugs[$issue->number])) unset($bugs[$issue->number]);
 									if (isset($enhancements[$issue->number])) unset($enhancements[$issue->number]);
@@ -150,8 +164,11 @@ try {
 						}
 					}
 				}
+				if ($debug) echo "Found " . ($bcount + $ecount) . " issues\n";
 			}
 		}
+
+		if ($debug) echo "Found a total of " . (count($bugs) + count($enhancements)) . " issues\n";
 
 	}
 } catch (\GuzzleHttp\Exception\RequestException $e) {
