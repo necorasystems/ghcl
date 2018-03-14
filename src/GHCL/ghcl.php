@@ -79,7 +79,7 @@ $number = 0;
 
 try {
 	if ($debug) echo "Attempting to find milestone " . $options->milestone . "...\n";
-	$response = $http->request('GET', "repos/" . $options->user . "/" . $options->repository . '/milestones?state=all');
+	$response = $http->request('GET', "repos/" . $options->user . "/" . $options->repository . '/milestones?state=all&direction=desc');
 	$data = json_decode($response->getBody());
 	foreach ($data as $d) {
 		if ($d->title == $options->milestone) {
