@@ -189,7 +189,7 @@ if (is_string($output)) {
 	}
 }
 
-fputs($output, "##Version " . $options->milestone . " (" . date('Y-m-d') . ")\n\n");
+fputs($output, "## Version " . $options->milestone . " (" . date('Y-m-d') . ")\n\n");
 if (!empty($bugs)) {
 	fputs($output, "**Fixed bugs**\n\n");
 	foreach ($bugs as $bug) {
