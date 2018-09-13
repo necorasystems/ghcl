@@ -107,70 +107,31 @@ $bugs = array();
 $enhancements = array();
 try {
 	if ($debug) echo "Fetching issues...\n";
+
 	$response = $http->request('GET', "repos/" . $options->user . "/" . $options->repository . "/issues?milestone=$number&state=all");
-	$issues = json_decode($response->getBody());
-	$bcount = 0;
-	$ecount = 0;
-	foreach ($issues as $issue) {
-		if (isset($issue->pull_request)) continue;
-		if (isset($issue->labels) && is_array($issue->labels)) {
-			foreach ($issue->labels as $label) {
-				if ($label->name == 'bug') {
-					$bugs[$issue->number] = "  - " . $issue->title . " [#" . $issue->number . "]";
-					$bcount++;
-				} elseif ($label->name == 'enhancement') {
-					$enhancements[$issue->number] = "  - " . $issue->title . " [#" . $issue->number . "]";
-					$ecount++;
-				} elseif ($label->name == 'skip-changelog') {
-					if (isset($bugs[$issue->number])) unset($bugs[$issue->number]);
-					if (isset($enhancements[$issue->number])) unset($enhancements[$issue->number]);
-					continue 2;
-				}
-			}
-		}
-	}
+	getIssues($response, $bugs, $enhancements);
 
-	if ($debug) echo "Found " . ($bcount + $ecount) . " issues\n";
+	$issuecount = count($bugs) + count($enhancements);
 
-	if (is_array($response->getHeader('Link'))) {
-		$l = $response->getHeader('Link');
-		if (is_array($l) && !empty($l)) {
-			$links = explode(',', $l[0]);
-			foreach ($links as $link) {
-				if ($debug) echo "Fetching next page of issues...\n";
-				$bcount = 0;
-				$ecount = 0;
-				$parts = explode(';', $link);
-				if (strpos($parts[0], '<') !== false && trim($parts[1]) == 'rel="next"') {
-					$url = str_replace(array('<', '>'), '', $parts[0]);
-					$response = $http->request('GET', $url);
-					$issues = json_decode($response->getBody());
-					foreach ($issues as $issue) {
-						if (isset($issue->pull_request)) continue;
-						if (isset($issue->labels) && is_array($issue->labels)) {
-							foreach ($issue->labels as $label) {
-								if ($label->name == 'bug') {
-									$bugs[$issue->number] = "  - " . $issue->title . " [#" . $issue->number . "]";
-									$bcount++;
-								} elseif ($label->name == 'enhancement') {
-									$enhancements[$issue->number] = "  - " . $issue->title . " [#" . $issue->number . "]";
-									$ecount++;
-								} elseif ($label->name == 'skip-changelog') {
-									if (isset($bugs[$issue->number])) unset($bugs[$issue->number]);
-									if (isset($enhancements[$issue->number])) unset($enhancements[$issue->number]);
-									continue 2;
-								}
-							}
-						}
-					}
-				}
-				if ($debug) echo "Found " . ($bcount + $ecount) . " issues\n";
-			}
-		}
+	if ($debug) echo "Found " . $issuecount . " issues\n";
 
-		if ($debug) echo "Found a total of " . (count($bugs) + count($enhancements)) . " issues\n";
+    $nexturl = getNextUrl($response);
+    while (is_string($nexturl)) {
 
-	}
+        if ($debug) echo "Fetching next page of issues...\n";
+
+        $response = $http->request('GET', $nexturl);
+        getIssues($response, $bugs, $enhancements);
+
+        if ($debug) echo "Found " . (count($bugs) + count($enhancements) - $issuecount) . " issues\n";
+
+        $issuecount = count($bugs) + count($enhancements);
+
+        $nexturl = getNextUrl($response);
+    }
+
+    if ($debug) echo "Found a total of " . $issuecount . " issues\n";
+
 } catch (\GuzzleHttp\Exception\RequestException $e) {
 	if ($e->hasResponse()) {
 		if ($e->getResponse()->getStatusCode() == 404) {
@@ -203,4 +164,46 @@ if (!empty($enhancements)) {
 		fputs($output, $enhancement . "\n");
 	}
 	fputs($output, "\n");
+}
+
+function getIssues($response, &$bugs, &$enhancements) {
+
+    $issues = json_decode($response->getBody());
+    foreach ($issues as $issue) {
+        if (isset($issue->pull_request)) continue;
+        if (isset($issue->labels) && is_array($issue->labels)) {
+            foreach ($issue->labels as $label) {
+                if ($label->name == 'bug') {
+                    $bugs[$issue->number] = "  - " . $issue->title . " [#" . $issue->number . "]";
+                } elseif ($label->name == 'enhancement') {
+                    $enhancements[$issue->number] = "  - " . $issue->title . " [#" . $issue->number . "]";
+                } elseif ($label->name == 'skip-changelog') {
+                    if (isset($bugs[$issue->number])) unset($bugs[$issue->number]);
+                    if (isset($enhancements[$issue->number])) unset($enhancements[$issue->number]);
+                    continue 2;
+                }
+            }
+        }
+    }
+}
+
+function getNextUrl($response) {
+
+    $l = $response->getHeader('Link');
+
+    $nexturl = null;
+    if (is_array($l) && !empty($l)) {
+
+        $links = explode(',', $l[0]);
+        foreach ($links as $link) {
+            $parts = explode(';', $link);
+
+            if (strpos($parts[0], '<') !== false && isset($parts[1]) && trim($parts[1]) == 'rel="next"') {
+                $nexturl = trim(str_replace(array('<', '>'), '', $parts[0]));
+                break;
+            }
+        }
+    }
+
+    return $nexturl;
 }
